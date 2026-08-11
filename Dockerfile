@@ -38,6 +38,39 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends nodejs && \
     rm -rf /var/lib/apt/lists/*
 
+# The agent's terminal toolbox — BAKED IN ON PURPOSE.
+#
+# This container is immutable: Railway rebuilds it from this Dockerfile on every
+# deploy, so anything the agent `apt-get install`s at runtime (it runs as root,
+# so it can) is silently gone on the next redeploy while its shell commands keep
+# referencing it. `gh` was lost exactly this way. Tools the agent reaches for
+# routinely therefore belong here, not in a runtime install.
+#
+# gh is not in Debian main, so it comes from GitHub's own apt repo (the
+# documented install path). Deliberately NOT pinned to a release tarball: the
+# asset filename embeds the version, and resolving "latest" through the
+# unauthenticated GitHub API at build time rate-limits on shared CI/builder IPs.
+# The `stable` suite tracks current releases and is signed by the keyring below.
+#
+# Debian ships fd as `fdfind` (the name `fd` collides with an unrelated package),
+# so the final `ln` restores the name every doc — and the agent — actually uses.
+#
+# See also: the volume-backed PATH further down, which is where AD-HOC tools
+# (anything not listed here) should be installed so they survive a redeploy.
+#
+# WEIGHT: 51MB for the six packages, most of it gh.
+RUN mkdir -p -m 755 /etc/apt/keyrings && \
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      -o /etc/apt/keyrings/githubcli-archive-keyring.gpg && \
+    chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+      > /etc/apt/sources.list.d/github-cli.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+      gh jq ripgrep fd-find unzip less && \
+    ln -sf "$(command -v fdfind)" /usr/local/bin/fd && \
+    rm -rf /var/lib/apt/lists/*
+
 # Install hermes-agent (provides the `hermes` CLI) and pre-build its React
 # dashboard so `hermes dashboard` has nothing to build at runtime.
 #
@@ -101,6 +134,70 @@ RUN printf 'docker\n' > /opt/hermes-agent/.install_method
 COPY requirements.txt /app/requirements.txt
 RUN uv pip install --system --no-cache -r /app/requirements.txt
 
+# ── Cloud CLIs the agent operates this deployment with ────────────────────────
+# Placed AFTER the hermes clone/npm build on purpose: both are version-pinned, so
+# a bump here must not invalidate those (slow) layers. Placed BEFORE the COPY of
+# server.py/templates so ordinary app edits don't rebuild them either.
+
+# Railway CLI — prebuilt binary, matching the approach in the wake workflow at
+# fontvu/hermes-agent-scripts (`npm i -g @railway/cli` postinstall intermittently
+# fails on shared runners with a self-signed-cert TLS error; a direct release
+# download does not).
+#
+# To bump: check https://github.com/railwayapp/cli/releases and update the
+# default below. Note the asset targets differ per arch — amd64 publishes a
+# glibc build, arm64 only a musl one — hence the case mapping rather than a
+# single hardcoded filename. The wake workflow pins its own copy separately;
+# the two do not need to match.
+ARG RAILWAY_CLI_VERSION=5.37.2
+RUN set -eu; \
+    case "$(dpkg --print-architecture)" in \
+      amd64) rw_target=x86_64-unknown-linux-gnu ;; \
+      arm64) rw_target=aarch64-unknown-linux-musl ;; \
+      *) echo "unsupported arch for railway cli: $(dpkg --print-architecture)" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://github.com/railwayapp/cli/releases/download/v${RAILWAY_CLI_VERSION}/railway-v${RAILWAY_CLI_VERSION}-${rw_target}.tar.gz" \
+      -o /tmp/railway.tar.gz; \
+    tar -xzf /tmp/railway.tar.gz -C /usr/local/bin railway; \
+    rm /tmp/railway.tar.gz; \
+    chmod +x /usr/local/bin/railway
+
+# OCI CLI — installed into its OWN venv, not the system interpreter.
+#
+# oci-cli hard-pins several packages hermes also depends on (click, PyYAML,
+# cryptography, python-dateutil, prompt-toolkit). `uv pip install --system`
+# would resolve those pins against the shared site-packages this image installs
+# hermes into, so an oci-cli upgrade could silently downgrade a hermes
+# dependency and break the gateway — a failure that would surface as an
+# unrelated import error at runtime. An isolated venv makes that impossible;
+# only the `oci` entrypoint is exposed, via symlink.
+#
+# Oracle's official install.sh is deliberately avoided: it targets $HOME, which
+# is /data here, and the Railway volume mounts OVER /data at runtime — the whole
+# install would vanish the moment the container starts.
+#
+# WEIGHT: this layer measures 444MB (`docker history`) — by far the largest in
+# the image. Measured breakdown, 33,403 files / 336MB apparent / 424MB allocated:
+#   200MB  oci/       the SDK: 175 service subpackages, 16,247 generated model
+#                     classes, 5.17M lines of Python. Oracle ships ONE package
+#                     covering the entire cloud, not per-service distributions.
+#    53MB  services/  oci_cli's generated command layer, 168 services
+#    49MB  oci_cli/help_text_producer — 11,458 pre-rendered .txt help pages
+#    14MB  cryptography
+#   ~70MB  4KB-block slack: 33k files, most of them tiny
+# Nothing is safely prunable while keeping every service working. The one real
+# lever is help_text_producer (~85MB allocated), which only feeds `oci ... --help`
+# command reference output. Note also: uv writes no .pyc, so the first `oci`
+# invocation bytecompiles into the container's writable layer (~200MB, ephemeral).
+#
+# `railway redeploy` reuses the built image, so the daily wake does not re-pay
+# any of this; only a push that rebuilds does. If the trade stops being worth it,
+# delete this layer and install oci-cli into a venv under /data/.local instead —
+# the volume persists, so it survives redeploys without shipping in the image.
+RUN uv venv /opt/oci-cli && \
+    uv pip install --python /opt/oci-cli/bin/python --no-cache oci-cli && \
+    ln -sf /opt/oci-cli/bin/oci /usr/local/bin/oci
+
 RUN mkdir -p /data/.hermes
 
 COPY server.py /app/server.py
@@ -110,6 +207,22 @@ RUN chmod +x /app/start.sh
 
 ENV HOME=/data
 ENV HERMES_HOME=/data/.hermes
+
+# Volume-backed bin dirs — the durable home for AD-HOC tools.
+#
+# HOME=/data already puts ~/.local/bin and ~/bin on the persistent Railway
+# volume, but nothing ever added them to PATH, so a binary dropped there was
+# invisible and the agent had no place to install anything that outlives a
+# redeploy. With these on PATH, `curl -o /data/.local/bin/<tool>` (or any
+# installer honouring ~/.local/bin) survives every deploy. apt packages cannot
+# work this way — dpkg spreads files across /usr, /etc and /var — so those
+# belong in the apt layer above.
+#
+# APPENDED, not prepended, deliberately: the volume outlives every image, so a
+# stale or broken binary left there (`python`, `hermes`, `node`…) would shadow
+# the image's copy on every future deploy and could leave the service unbootable
+# with no way in. Image tools win; the volume can only ADD commands.
+ENV PATH=$PATH:/data/.local/bin:/data/bin
 
 # Points hermes at our pre-built TUI bundle. hermes's _make_tui_argv checks
 # HERMES_TUI_DIR first: if dist/entry.js exists there, it skips the npm

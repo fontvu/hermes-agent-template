@@ -20,6 +20,23 @@ mkdir -p /data/.hermes/cron /data/.hermes/sessions /data/.hermes/logs \
          /data/.hermes/workspace /data/.hermes/skins /data/.hermes/plans \
          /data/.hermes/home
 
+# Volume-backed bin dirs for ad-hoc CLI tools the agent installs itself.
+# Dockerfile appends both to PATH; created here because a fresh Railway volume
+# mounts empty over /data, and a PATH entry pointing at a missing directory is
+# silently ignored — so an installer writing to ~/.local/bin would fail and the
+# tool would be unreachable. Tools the agent needs *routinely* belong in the
+# image (see the apt layer in the Dockerfile), not here: only single-binary
+# installs survive on the volume, apt packages do not.
+mkdir -p /data/.local/bin /data/bin
+
+# Credential homes for the baked-in cloud CLIs. HOME=/data, so `oci` and
+# `railway` already store their config on the persistent volume — `oci setup
+# config` / `railway login` survive redeploys and need doing only once.
+# .oci is created 700 up front because the OCI CLI refuses to use an API key
+# whose file is group/world-readable ("Permissions on ... are too open"), and a
+# dir created later by a umask-022 process makes that easy to trip over.
+mkdir -p /data/.oci && chmod 700 /data/.oci
+
 # Stamp the install method as "docker" so hermes treats this as an immutable
 # container image, not a pip checkout. hermes's detect_install_method() reads
 # $HERMES_HOME/.install_method FIRST (before any .git / pip fallback). Without
