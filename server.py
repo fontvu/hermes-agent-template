@@ -423,7 +423,14 @@ def write_config_yaml(data: dict[str, str], *, reset_model: bool = False) -> Non
         merged_model = {"default": ""}
     else:
         merged_model = dict(merged.get("model") if isinstance(merged.get("model"), dict) else {})
-        merged_model["default"] = model
+        # Only overwrite the model when .env actually specifies one. When the
+        # model was set via the native 'Keys' tab (config.yaml only) and .env has
+        # no LLM_MODEL, `model` is "" here — blindly assigning it would erase the
+        # Keys-tab model on every gateway start, booting hermes with no model.
+        if model:
+            merged_model["default"] = model
+        else:
+            merged_model.setdefault("default", "")
         current_provider = str(merged_model.get("provider") or "").strip()
         # Only default to "auto" on a config that has never had a provider
         # pinned. Once a provider is set explicitly — either by
@@ -633,6 +640,36 @@ def _has_xai_oauth_tokens() -> bool:
         return bool(isinstance(tokens, dict) and tokens.get("refresh_token"))
     except Exception:
         return False
+
+
+def _auth_json_has_provider() -> bool:
+    """True when auth.json carries a usable credential for ANY provider.
+
+    Generalizes _has_xai_oauth_tokens(): the native Hermes dashboard 'Keys' tab
+    and every OAuth login persist into $HERMES_HOME/auth.json under
+    providers.<name>, either as OAuth tokens (tokens.refresh_token /
+    tokens.access_token) or a raw api_key/key. This store never touches the
+    template's .env, so is_config_complete() must read it directly.
+    """
+    auth_path = Path(HERMES_HOME) / "auth.json"
+    if not auth_path.exists():
+        return False
+    try:
+        data = json.loads(auth_path.read_text())
+    except Exception:
+        return False
+    providers = data.get("providers")
+    if not isinstance(providers, dict):
+        return False
+    for entry in providers.values():
+        if not isinstance(entry, dict):
+            continue
+        tokens = entry.get("tokens")
+        if isinstance(tokens, dict) and (tokens.get("refresh_token") or tokens.get("access_token")):
+            return True
+        if entry.get("api_key") or entry.get("key"):
+            return True
+    return False
 
 
 def _save_xai_auth_json(tokens: dict) -> None:
@@ -854,15 +891,64 @@ async def api_oauth_xai_status(request: Request) -> Response:
     })
 
 
+def _config_yaml_readiness() -> tuple[bool, bool]:
+    """Report (has_model_default, has_provider_credential) from config.yaml.
+
+    The native Hermes 'Keys' tab writes model.default / model.provider (and, for
+    custom endpoints, model.api_key or a custom_providers[] block) here — never
+    into the template's .env. Guarded-load mirrors write_config_yaml().
+    """
+    import yaml
+    config_path = Path(HERMES_HOME) / "config.yaml"
+    if not config_path.exists():
+        return (False, False)
+    try:
+        with config_path.open() as f:
+            loaded = yaml.safe_load(f)
+    except (yaml.YAMLError, OSError):
+        return (False, False)
+    if not isinstance(loaded, dict):
+        return (False, False)
+    model = loaded.get("model") if isinstance(loaded.get("model"), dict) else {}
+    has_model = bool(str(model.get("default") or "").strip())
+    # A named built-in provider (openrouter, gemini, …) resolves its own
+    # credentials from env, so a bare provider pin isn't proof of a key. But a
+    # custom/local endpoint carries the key inline, and custom_providers[] means
+    # a key_env is wired. Treat those as a provider credential.
+    provider = str(model.get("provider") or "").strip().lower()
+    has_provider = bool(
+        (provider in ("custom", "local") and (model.get("api_key") or model.get("base_url")))
+        or (isinstance(loaded.get("custom_providers"), list) and loaded["custom_providers"])
+    )
+    return (has_model, has_provider)
+
+
 def is_config_complete(data: dict[str, str] | None = None) -> bool:
     """Single source of truth for 'ready to run the gateway'.
 
     Used by: GET / redirect, auto_start on boot, admin API status.
+
+    Config can legitimately live in three stores on the volume, and the gateway
+    subprocess reads all of them (build_hermes_env() merges os.environ + .env;
+    hermes itself reads config.yaml + auth.json). So readiness is the UNION:
+      - .env         — template setup wizard (LLM_MODEL + PROVIDER_KEYS)
+      - os.environ   — Railway service variables
+      - auth.json    — native 'Keys' tab / OAuth logins (any provider)
+      - config.yaml  — native 'Keys' tab (model.default; custom endpoint key)
+    A rare false-positive only fires a gw.start() that hermes rejects, which the
+    crash-loop supervisor already contains — far safer than skipping a gateway
+    that would have run fine (the bug this fixes).
     """
     if data is None:
         data = read_env(ENV_FILE)
-    has_model = bool(data.get("LLM_MODEL"))
-    has_provider = any(data.get(k) for k in PROVIDER_KEYS) or _has_xai_oauth_tokens()
+    yaml_model, yaml_provider = _config_yaml_readiness()
+    has_model = bool(data.get("LLM_MODEL")) or bool(os.environ.get("LLM_MODEL")) or yaml_model
+    has_provider = (
+        any(data.get(k) for k in PROVIDER_KEYS)
+        or any(os.environ.get(k) for k in PROVIDER_KEYS)
+        or _auth_json_has_provider()
+        or yaml_provider
+    )
     return has_model and has_provider
 
 
