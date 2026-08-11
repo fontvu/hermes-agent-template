@@ -379,8 +379,84 @@ def read_env(path: Path) -> dict[str, str]:
     return out
 
 
-def write_config_yaml(data: dict[str, str], *, reset_model: bool = False) -> None:
+def _model_memory_path() -> Path:
+    """Where the last-known-good model per provider is remembered."""
+    return Path(HERMES_HOME) / "last_model.json"
+
+
+def _remember_model(provider: str, model: str) -> None:
+    """Record `model` as the last-known-good default for `provider`.
+
+    Kept in its own small JSON file rather than written back into .env: .env
+    holds every credential the user has entered, and this runs on *every*
+    gateway start — rewriting that file each boot to persist a derived value is
+    needless exposure for the secrets living next to it.
+    """
+    model = (model or "").strip()
+    if not model:
+        return
+    key = (provider or "").strip().lower() or "_"
+    path = _model_memory_path()
+    mem = _pjson(path)
+    if not isinstance(mem, dict):
+        mem = {}  # _pjson passes through any valid JSON, incl. a bare list
+    if mem.get(key) == model and mem.get("_last") == model:
+        return  # already current — skip the write on the common restart path
+    mem[key] = model
+    mem["_last"] = model
+    try:
+        _wjson(path, mem)
+    except OSError:
+        pass  # the memory is an optimization; never fail a start over it
+
+
+def _recall_model(data: dict[str, str], provider: str) -> str:
+    """Best-effort model when no store configures one explicitly.
+
+    Deliberately contains NO hardcoded model id. Provider defaults roll over as
+    new models ship and old ones reprice or retire, so a pinned fallback would
+    keep routing the agent at a stale — eventually withdrawn — model long after
+    it stopped being the right choice. The chain, most specific first:
+
+      1. the last model actually used with THIS provider
+      2. the last model actually used with any provider
+      3. a per-provider hint in .env (the ``_MODEL_<PROVIDER>`` convention
+         write_config_yaml() already maintains for xai-oauth)
+      4. ``""`` — let hermes ask the provider for its own *current* default
+         ("leave empty to use the provider's default", per hermes'
+         cli-config.yaml.example)
+
+    Step 4 is the real safety net and the reason the gateway always starts: an
+    empty model is valid config, not missing config.
+    """
+    key = (provider or "").strip().lower() or "_"
+    mem = _pjson(_model_memory_path())
+    if not isinstance(mem, dict):
+        mem = {}
+    for candidate in (mem.get(key), mem.get("_last")):
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    if key != "_":
+        # Exact match first, then either direction of prefix overlap, so a
+        # config.yaml provider of "xai" still finds .env's _MODEL_XAI_OAUTH.
+        token = key.upper().replace("-", "_")
+        hints = [f"_MODEL_{token}"] + sorted(
+            k for k in data
+            if k.startswith(f"_MODEL_{token}")
+            or (k.startswith("_MODEL_") and token.startswith(k[len("_MODEL_"):]))
+        )
+        for hint in hints:
+            if str(data.get(hint) or "").strip():
+                return data[hint].strip()
+    return ""
+
+
+def write_config_yaml(data: dict[str, str], *, reset_model: bool = False) -> str:
     """Write config.yaml — deep-merge template defaults with any existing user/cron-managed sections.
+
+    Returns the model it resolved into ``model.default`` (``""`` when the choice
+    is delegated to the provider), so callers can log what the gateway will
+    actually run with instead of guessing from .env.
 
     Previously this overwrote ``$HERMES_HOME/config.yaml`` with a hardcoded template
     body on every boot, silently erasing user-managed top-level keys. The most
@@ -420,18 +496,31 @@ def write_config_yaml(data: dict[str, str], *, reset_model: bool = False) -> Non
         # `base_url: https://openrouter.ai/api/v1` that misroutes the next provider
         # the user configures). Everything else — hermes tuning defaults,
         # mcp_servers — is still deep-merged through untouched below.
-        merged_model = {"default": ""}
+        merged_model: dict = {"default": ""}
+        resolved = ""
+        # Drop the remembered model as well — otherwise the next gateway start
+        # would recall and reinstate the very model this reset just cleared.
+        try:
+            _model_memory_path().unlink(missing_ok=True)
+        except OSError:
+            pass
     else:
         merged_model = dict(merged.get("model") if isinstance(merged.get("model"), dict) else {})
-        # Only overwrite the model when .env actually specifies one. When the
-        # model was set via the native 'Keys' tab (config.yaml only) and .env has
-        # no LLM_MODEL, `model` is "" here — blindly assigning it would erase the
-        # Keys-tab model on every gateway start, booting hermes with no model.
-        if model:
-            merged_model["default"] = model
-        else:
-            merged_model.setdefault("default", "")
         current_provider = str(merged_model.get("provider") or "").strip()
+        # Resolve through a fallback chain rather than blindly assigning `model`
+        # (= .env LLM_MODEL, frequently ""). When the model was set via the
+        # native 'Keys' tab it lives in config.yaml only, so the old
+        # unconditional assignment erased it on every gateway start and booted
+        # hermes with nothing. Order: .env → what config.yaml already holds →
+        # last model seen in use → "" (the provider's own *current* default).
+        # No step pins a model id; see _recall_model() for why.
+        resolved = (
+            model
+            or str(merged_model.get("default") or "").strip()
+            or _recall_model(data, current_provider)
+        )
+        merged_model["default"] = resolved
+        _remember_model(current_provider, resolved)
         # Only default to "auto" on a config that has never had a provider
         # pinned. Once a provider is set explicitly — either by
         # set_active_model_via_hermes() below (which delegates to hermes' own
@@ -540,6 +629,8 @@ def write_config_yaml(data: dict[str, str], *, reset_model: bool = False) -> Non
     with config_path.open("w") as f:
         yaml.safe_dump(merged, f, sort_keys=False, default_flow_style=False)
 
+    return resolved
+
 
 def build_hermes_env() -> dict[str, str]:
     """Merge OS env + HERMES_HOME + .env file contents for a hermes subprocess.
@@ -647,9 +738,16 @@ def _auth_json_has_provider() -> bool:
 
     Generalizes _has_xai_oauth_tokens(): the native Hermes dashboard 'Keys' tab
     and every OAuth login persist into $HERMES_HOME/auth.json under
-    providers.<name>, either as OAuth tokens (tokens.refresh_token /
-    tokens.access_token) or a raw api_key/key. This store never touches the
-    template's .env, so is_config_complete() must read it directly.
+    providers.<name>. This store never touches the template's .env, so
+    is_config_complete() must read it directly.
+
+    Two credential shapes exist in the wild and both must count:
+      - NESTED — our own _save_xai_auth_json() writes providers.xai-oauth.tokens
+        .{refresh_token,access_token}
+      - FLAT   — hermes' own OAuth logins write the token fields directly on the
+        provider entry (observed for "nous": providers.nous.refresh_token /
+        .access_token alongside client_id, inference_base_url, agent_key)
+    Checking only the nested shape missed a live Nous login entirely.
     """
     auth_path = Path(HERMES_HOME) / "auth.json"
     if not auth_path.exists():
@@ -661,13 +759,14 @@ def _auth_json_has_provider() -> bool:
     providers = data.get("providers")
     if not isinstance(providers, dict):
         return False
+    cred_fields = ("refresh_token", "access_token", "api_key", "key", "agent_key")
     for entry in providers.values():
         if not isinstance(entry, dict):
             continue
-        tokens = entry.get("tokens")
-        if isinstance(tokens, dict) and (tokens.get("refresh_token") or tokens.get("access_token")):
+        if any(entry.get(f) for f in cred_fields):
             return True
-        if entry.get("api_key") or entry.get("key"):
+        tokens = entry.get("tokens")
+        if isinstance(tokens, dict) and any(tokens.get(f) for f in cred_fields):
             return True
     return False
 
@@ -935,6 +1034,17 @@ def is_config_complete(data: dict[str, str] | None = None) -> bool:
       - os.environ   — Railway service variables
       - auth.json    — native 'Keys' tab / OAuth logins (any provider)
       - config.yaml  — native 'Keys' tab (model.default; custom endpoint key)
+
+    An explicit model is NOT required. Per hermes' own cli-config.yaml.example:
+    "leave empty to use the provider's default. When empty, OpenRouter uses
+    google/gemini-3-flash-preview and Nous uses gemini-3-flash. Other providers
+    pick a sensible default automatically." So demanding LLM_MODEL made this gate
+    STRICTER than hermes itself and skipped gateways that would have run fine —
+    e.g. provider=nous via OAuth with an empty model.default. The one exception
+    is a custom OpenAI-compatible endpoint (HERMES_CUSTOM_STYLE_KEYS): those are
+    outside hermes' PROVIDER_REGISTRY and cannot resolve a default model, so an
+    explicit model is still required when that's the only credential.
+
     A rare false-positive only fires a gw.start() that hermes rejects, which the
     crash-loop supervisor already contains — far safer than skipping a gateway
     that would have run fine (the bug this fixes).
@@ -943,13 +1053,18 @@ def is_config_complete(data: dict[str, str] | None = None) -> bool:
         data = read_env(ENV_FILE)
     yaml_model, yaml_provider = _config_yaml_readiness()
     has_model = bool(data.get("LLM_MODEL")) or bool(os.environ.get("LLM_MODEL")) or yaml_model
-    has_provider = (
-        any(data.get(k) for k in PROVIDER_KEYS)
-        or any(os.environ.get(k) for k in PROVIDER_KEYS)
+
+    env_provider_keys = [k for k in PROVIDER_KEYS if data.get(k) or os.environ.get(k)]
+    has_provider = bool(env_provider_keys) or _auth_json_has_provider() or yaml_provider
+
+    # A provider that can resolve its own default model makes LLM_MODEL optional:
+    # any named built-in provider key, or any auth.json credential (OAuth logins
+    # such as nous / xai-oauth / gemini). Custom-style keys are excluded.
+    self_defaulting = (
+        any(k not in HERMES_CUSTOM_STYLE_KEYS for k in env_provider_keys)
         or _auth_json_has_provider()
-        or yaml_provider
     )
-    return has_model and has_provider
+    return has_provider and (has_model or self_defaulting)
 
 
 def mask(data: dict[str, str]) -> dict[str, str]:
@@ -1181,11 +1296,16 @@ class Gateway:
         self._stopping = False
         try:
             env = build_hermes_env()
-            model = env.get("LLM_MODEL", "")
             provider_key = next((env.get(k, "") for k in PROVIDER_KEYS if env.get(k)), "")
-            print(f"[gateway] model={model or '⚠ NOT SET'} | provider_key={'set' if provider_key else '⚠ NOT SET'}", flush=True)
             # Write config.yaml so hermes picks up the model (env vars alone aren't always enough)
-            write_config_yaml(read_env(ENV_FILE))
+            resolved_model = write_config_yaml(read_env(ENV_FILE))
+            # Log AFTER the write, from its return value: the model can legitimately
+            # come from config.yaml (native 'Keys' tab) or the last-used memory
+            # rather than .env, and an empty one means "provider's own default" —
+            # a valid config, so don't flag it. Same for the credential: an OAuth
+            # login lives in auth.json and never touches PROVIDER_KEYS.
+            cred = "set" if provider_key else ("oauth" if _auth_json_has_provider() else "⚠ NOT SET")
+            print(f"[gateway] model={resolved_model or 'provider default'} | provider_key={cred}", flush=True)
             # --replace: force-displace any existing gateway.pid lock holder
             # before claiming it. Without this, a lock left behind by a prior
             # incarnation this supervisor doesn't recognize as "our" dead
