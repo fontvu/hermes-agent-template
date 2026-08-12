@@ -1009,11 +1009,13 @@
   <div class="header-spacer"></div>
   <div class="header-branding">
     <span>made with ♥ by</span>
-    <img src="https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/heimdall-light.svg" alt="Heimdall">
-    <a href="https://github.com/praveen-ks-2001" target="_blank" rel="noopener">Heimdall</a>
+    <!-- GitHub serves the account avatar at /<user>.png and honours ?size=.
+         Asked for 48px to stay sharp on 2-3x displays in a 16px slot. -->
+    <img src="https://github.com/fontvu.png?size=48" alt="fontvu">
+    <a href="https://github.com/fontvu" target="_blank" rel="noopener">fontvu</a>
   </div>
   <div class="header-spacer"></div>
-  <a class="header-issue-link" href="https://github.com/praveen-ks-2001/hermes-agent-template/issues" target="_blank" rel="noopener">⚠ Report issue</a>
+  <a class="header-issue-link" href="https://github.com/fontvu/hermes-agent-template/issues" target="_blank" rel="noopener">⚠ Report issue</a>
   <button class="header-btn" @click="restartGateway()">↺ Restart</button>
 </div>
 
@@ -1782,7 +1784,7 @@
 
         <!-- Issue callout -->
         <div class="guide-callout">
-          Facing an issue or something not working as expected? <a href="https://github.com/praveen-ks-2001/hermes-agent-template/issues" target="_blank" rel="noopener">Create a GitHub issue</a> and we'll help you out.
+          Facing an issue or something not working as expected? <a href="https://github.com/fontvu/hermes-agent-template/issues" target="_blank" rel="noopener">Create a GitHub issue</a> and we'll help you out.
         </div>
 
       </div>
