@@ -10,6 +10,12 @@ FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 # that every rebuild can pull arbitrary new upstream commits.
 ARG HERMES_REF=v2026.8.3
 
+# Which repo to clone hermes-agent from. Defaults to upstream; override to
+# build from a fork/branch that carries unreleased fixes, e.g.
+#   HERMES_REPO=https://github.com/fontvu/hermes-agent.git
+#   HERMES_REF=fix/nul-path-lifecycle-guard
+ARG HERMES_REPO=https://github.com/NousResearch/hermes-agent.git
+
 # Persist the build arg into the runtime env so the admin UI can display which
 # Hermes release this image actually pins. Reading it (rather than hardcoding a
 # version in the template) keeps the badge honest when someone overrides
@@ -93,7 +99,7 @@ RUN mkdir -p -m 755 /etc/apt/keyrings && \
 # override-dependencies fixes discord.py's vulnerable pynacl pin, and
 # exclude-newer="14 days" can fail a build on a fresh dep — override with
 # `uv pip install --exclude-newer <date>`.
-RUN git clone --depth 1 --branch ${HERMES_REF} https://github.com/NousResearch/hermes-agent.git /opt/hermes-agent && \
+RUN git clone --depth 1 --branch ${HERMES_REF} ${HERMES_REPO} /opt/hermes-agent && \
     cd /opt/hermes-agent && \
     uv pip install --system --no-cache -e ".[all,messaging,tts-premium,honcho,bedrock,anthropic,edge-tts,hindsight,vision]" && \
     cd /opt/hermes-agent/web && \
