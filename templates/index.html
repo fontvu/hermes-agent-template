@@ -1812,6 +1812,33 @@
         </div>
 
         <div class="changelog-entry major">
+          <div class="changelog-date">August 18, 2026</div>
+          <div class="changelog-meta">
+            <span class="meta-box">
+              <span class="meta-label">Git branch</span>
+              <code>release/v2026.8.18/1</code>
+            </span>
+            <span class="meta-box version">
+              <span class="meta-label">Hermes compatible version</span>
+              <code>v2026.8.18</code>
+            </span>
+          </div>
+
+          <div class="changelog-group">Hermes update</div>
+          <ul class="changelog-list">
+            <li>Updated <strong>Hermes Agent to v2026.8.18</strong> (from v2026.8.3) — see the upstream <a href="https://github.com/NousResearch/hermes-agent/releases" target="_blank" rel="noopener" style="color:var(--accent2);">release notes</a> for the full list of changes between these tags.</li>
+          </ul>
+
+          <div class="changelog-group">Improvements</div>
+          <ul class="changelog-list">
+            <li><strong>xAI Grok SuperGrok OAuth</strong> — connect a SuperGrok subscription via device-code flow directly from the provider dropdown. No API key needed; tokens auto-refresh, and the gateway restarts with xAI OAuth active.</li>
+            <li><strong>Pinned-version badge</strong> — the sidebar footer shows which Hermes release this deployment is pinned to (read from <code>HERMES_REF</code>, never hardcoded). Click it to open this panel, where per-release branch names for rolling back are listed.</li>
+            <li><strong>Hermes Console WebSocket proxy</strong> — the native Hermes Console (System tab → "Open console") is now proxied through the same cookie gate as the rest of the dashboard, so it works out of the box without extra configuration.</li>
+            <li><strong>Other Templates panel</strong> — a sidebar panel links to other one-click AI agent templates you can deploy on Railway.</li>
+          </ul>
+        </div>
+
+        <div class="changelog-entry major">
           <div class="changelog-date">August 8, 2026</div>
           <div class="changelog-meta">
             <span class="meta-box">

@@ -11,6 +11,30 @@ release.
 
 ---
 
+## release/v2026.8.18/1 — August 18, 2026
+**Hermes v2026.8.18 · major (Hermes upgrade, from v2026.8.3)**
+
+### Hermes update
+- Hermes Agent **v2026.8.3 → v2026.8.18** — see the upstream
+  [release notes](https://github.com/NousResearch/hermes-agent/releases) for the
+  full list of changes between these tags.
+
+### Improvements
+- **xAI Grok SuperGrok OAuth** — connect a SuperGrok subscription via
+  device-code flow directly from the provider dropdown. No API key needed;
+  tokens auto-refresh, and the gateway restarts with xAI OAuth active.
+- **Pinned-version badge** — the sidebar footer shows which Hermes release this
+  deployment is pinned to (read from `HERMES_REF`, never hardcoded). Click it to
+  open the What's New panel, where per-release branch names for rolling back are
+  listed.
+- **Hermes Console WebSocket proxy** — the native Hermes Console (System tab →
+  "Open console") is now proxied through the same cookie gate as the rest of the
+  dashboard, so it works out of the box without extra configuration.
+- **Other Templates panel** — a sidebar panel links to other one-click AI agent
+  templates you can deploy on Railway.
+
+---
+
 ## release/v2026.8.3/1 — August 8, 2026
 **Hermes v2026.8.3 · major (Hermes upgrade, from v2026.7.20)**
 
