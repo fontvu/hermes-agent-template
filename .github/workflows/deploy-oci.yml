@@ -31,13 +31,6 @@ jobs:
       - name: Check out Hermes source
         uses: actions/checkout@v4
 
-      - name: Check out OCI deployment script
-        uses: actions/checkout@v4
-        with:
-          repository: fontvu/OCI-creation-scripts
-          ref: main
-          path: oci-creation-scripts
-
       - name: Configure SSH
         shell: bash
         env:
@@ -64,7 +57,7 @@ jobs:
             -o StrictHostKeyChecking=yes \
             ubuntu@"$OCI_INSTANCE_IP" \
             "sudo env HERMES_REPO_REF=$DEPLOY_SHA HERMES_IMAGE_TAG=$DEPLOY_SHA bash -s" \
-            < oci-creation-scripts/deploy/redeploy-hermes.sh
+            < deploy/redeploy-hermes.sh
 
       - name: Verify Hermes after deployment
         shell: bash
