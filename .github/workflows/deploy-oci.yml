@@ -1,0 +1,77 @@
+name: Deploy Hermes to OCI
+
+# Automatically deploy every commit merged to the template's main branch.
+# A manual dispatch remains available for recovery or a controlled redeploy.
+# The image is built on the OCI ARM64 host before the running Hermes container
+# is replaced. Caddy, Firecrawl, the VM, and both data volumes are untouched.
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hermes-oci-deploy
+  # Never cancel a live SSH deployment in the middle of a container cutover.
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build and redeploy Hermes on OCI
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      OCI_INSTANCE_IP: "168.107.70.126"
+
+    steps:
+      - name: Check out Hermes source
+        uses: actions/checkout@v4
+
+      - name: Check out OCI deployment script
+        uses: actions/checkout@v4
+        with:
+          repository: fontvu/OCI-creation-scripts
+          ref: main
+          path: oci-creation-scripts
+
+      - name: Configure SSH
+        shell: bash
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$SSH_PRIVATE_KEY" ]]; then
+            echo "Missing OCI_SSH_PRIVATE_KEY Actions secret in hermes-agent-template." >&2
+            exit 1
+          fi
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/hermes-oci_ed25519"
+          chmod 600 "$HOME/.ssh/hermes-oci_ed25519"
+          ssh-keyscan -H "$OCI_INSTANCE_IP" > "$HOME/.ssh/known_hosts"
+
+      - name: Build and redeploy Hermes
+        shell: bash
+        env:
+          DEPLOY_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          ssh -i "$HOME/.ssh/hermes-oci_ed25519" \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            ubuntu@"$OCI_INSTANCE_IP" \
+            "sudo env HERMES_REPO_REF=$DEPLOY_SHA HERMES_IMAGE_TAG=$DEPLOY_SHA bash -s" \
+            < oci-creation-scripts/deploy/redeploy-hermes.sh
+
+      - name: Verify Hermes after deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i "$HOME/.ssh/hermes-oci_ed25519" \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            ubuntu@"$OCI_INSTANCE_IP" \
+            'sudo docker inspect hermes --format "status={{.State.Status}} running={{.State.Running}} restart={{.RestartCount}}"; sudo docker exec hermes sh -c "curl -fsS --max-time 5 http://127.0.0.1:8080/health >/dev/null"'
