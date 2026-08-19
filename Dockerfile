@@ -118,19 +118,11 @@ RUN git clone --depth 1 --branch ${HERMES_REF} ${HERMES_REPO} /opt/hermes-agent 
 # "TypeError: fetch_models() got an unexpected keyword argument 'base_url'",
 # which the catalog path swallows (try/except Exception: pass) → the model
 # picker shows 0 models for CommandCode even with a valid API key.
-# This sed adds the accepted base_url param to both profiles' fetch_models.
-# Idempotent and non-fatal: if upstream renames/removes the file or changes
-# the signature shape, the step warns instead of breaking the build.
-RUN set -e; \
-    F=/opt/hermes-agent/plugins/model-providers/commandcode/__init__.py; \
-    if [ -f "$F" ]; then \
-      sed -i -E 's/(def fetch_models\(\s*self,\s*\*,\s*api_key: str \| None = None,)\s*timeout: float = 8\.0,/\1\n        base_url: str | None = None,\n        timeout: float = 8.0,/' "$F"; \
-      if ! grep -q "base_url: str | None = None" "$F"; then \
-        echo "WARN: commandcode fetch_models patch did not apply (upstream signature changed?)"; \
-      fi; \
-    else \
-      echo "WARN: commandcode plugin not found at $F (upstream may have removed it)"; \
-    fi
+# We overwrite the upstream plugin file with a corrected copy (tracked in
+# overrides/ and reviewable in git) rather than sed-patching at build time —
+# a deterministic file copy avoids regex/escaping hazards inside Dockerfile RUN.
+COPY overrides/plugins/model-providers/commandcode/__init__.py \
+     /opt/hermes-agent/plugins/model-providers/commandcode/__init__.py
 
 # Why pre-build ui-tui (and why we don't delete it after):
 # - The dashboard's embedded Chat tab spawns `node ui-tui/dist/entry.js`
