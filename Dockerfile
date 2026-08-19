@@ -124,6 +124,21 @@ RUN git clone --depth 1 --branch ${HERMES_REF} ${HERMES_REPO} /opt/hermes-agent 
 COPY overrides/plugins/model-providers/commandcode/__init__.py \
      /opt/hermes-agent/plugins/model-providers/commandcode/__init__.py
 
+# ── In-tree patch: Telegram /model picker cap for CommandCode ──────────────────
+# Upstream caps the picker at max_models=50, which silently drops the tail of
+# CommandCode's 56-model catalog (including Meta's muse-spark-1.2* and xAI's
+# grok-* families). Raise the cap to 80 so all models are selectable.
+COPY overrides/gateway/slash_commands.py \
+     /opt/hermes-agent/gateway/slash_commands.py
+
+# ── In-tree patch: CommandCode uncapped picker exemption ──────────────────────
+# Upstream's _UNCAPPED_PICKER_PROVIDERS list exempts opencode-zen/go from the
+# max_models cap. CommandCode (and its Anthropic-profile sibling) also surface
+# 50+ models and must be fully visible in /model pickers. We overwrite the
+# upstream file with a corrected copy tracked in overrides/.
+COPY overrides/hermes_cli/model_switch.py \
+     /opt/hermes-agent/hermes_cli/model_switch.py
+
 # Why pre-build ui-tui (and why we don't delete it after):
 # - The dashboard's embedded Chat tab spawns `node ui-tui/dist/entry.js`
 #   on every WebSocket connect to /api/pty.
