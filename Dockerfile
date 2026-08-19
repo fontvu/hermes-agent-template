@@ -245,6 +245,50 @@ RUN uv venv /opt/oci-cli && \
     uv pip install --python /opt/oci-cli/bin/python --no-cache oci-cli && \
     ln -sf /opt/oci-cli/bin/oci /usr/local/bin/oci
 
+# ── Browser automation (platform-agnostic, free + self-hosted) ──────────────
+# Hermes natively supports local browsing via `agent-browser` (tools/browser_tool.py).
+# Two bake-in engines, selected at BUILD time — image stays platform-agnostic
+# (Railway, OCI VM, local docker). Default is `none` so Railway keeps its lean
+# image; flip for self-host:
+#   OCI/Docker:  --build-arg INSTALL_BROWSER=lightpanda   ~35 MB, no screenshots
+#                --build-arg INSTALL_BROWSER=chromium     ~500 MB, full engine
+#   Railway:     set INSTALL_BROWSER service variable + redeploy (build arg passthrough)
+#
+# lightpanda: https://github.com/lightpanda-io/browser — 1.3-5.8× faster
+# navigation than Chromium, no graphical renderer (no screenshots). Hermes's
+# browser_tool.py falls back to Chrome automatically when lightpanda returns an
+# empty snapshot / tiny screenshot, so a missing Chromium only matters if you
+# actually need screenshots.
+#
+# weight:  lightpanda = ~35 MB (binary) + ~20 MB agent-browser
+#          chromium   = ~500 MB + system libs (libnss3, libatk, libdrm, libgbm…)
+ARG INSTALL_BROWSER=none
+RUN set -eu; \
+    if [ "${INSTALL_BROWSER}" = "none" ]; then \
+        echo "none" > /opt/browser_engine; \
+        echo "Skipping browser bake (INSTALL_BROWSER=none) — lean image; use cloud CDP (BROWSER_CDP_URL) or rebuild with --build-arg INSTALL_BROWSER=lightpanda"; \
+    elif [ "${INSTALL_BROWSER}" = "lightpanda" ]; then \
+        npm install -g agent-browser --silent; \
+        arch="$(dpkg --print-architecture)"; \
+        case "$arch" in \
+            amd64) lp_asset=lightpanda-x86_64-linux ;; \
+            arm64) lp_asset=lightpanda-aarch64-linux ;; \
+            *) echo "unsupported arch for lightpanda: $arch" >&2; exit 1 ;; \
+        esac; \
+        curl -fsSL "https://github.com/lightpanda-io/browser/releases/download/nightly/${lp_asset}" \
+            -o /usr/local/bin/lightpanda; \
+        chmod +x /usr/local/bin/lightpanda; \
+        printf 'lightpanda\n' > /opt/browser_engine; \
+        echo "Baked lightpanda ($lp_asset) + agent-browser"; \
+    elif [ "${INSTALL_BROWSER}" = "chromium" ]; then \
+        npm install -g agent-browser --silent; \
+        npx --yes agent-browser install --with-deps; \
+        printf 'chromium\n' > /opt/browser_engine; \
+        echo "Baked Chromium via agent-browser install --with-deps"; \
+    else \
+        echo "Unknown INSTALL_BROWSER='${INSTALL_BROWSER}' — valid: none, lightpanda, chromium" >&2; exit 1; \
+    fi
+
 RUN mkdir -p /data/.hermes
 
 COPY server.py /app/server.py

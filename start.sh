@@ -88,4 +88,24 @@ if [ -n "${RAILWAY_PUBLIC_DOMAIN:-}" ]; then
   export HERMES_DASHBOARD_PUBLIC_URL
 fi
 
+# Browser engine: honors the baked INSTALL_BROWSER unless the operator
+# explicitly set AGENT_BROWSER_ENGINE at runtime. Hermes reads this via
+# tools/browser_tool.py _get_browser_engine() as AGENT_BROWSER_ENGINE →
+# auto | lightpanda | chrome. "none" bakes to /opt/browser_engine="none"
+# and must not set the env at all (Hermes defaults to "auto" → Chrome).
+if [ -z "${AGENT_BROWSER_ENGINE:-}" ] && [ -f /opt/browser_engine ]; then
+  _baked="$(tr -d '[:space:]' < /opt/browser_engine 2>/dev/null || true)"
+  case "${_baked}" in
+    lightpanda|chromium)
+      _engine_val="lightpanda"
+      [ "${_baked}" = "chromium" ] && _engine_val="chrome"
+      export AGENT_BROWSER_ENGINE="${_engine_val}"
+      echo "[start.sh] browser engine: ${_engine_val} (baked INSTALL_BROWSER=${_baked})"
+      ;;
+    none|"") : ;; # lean image — no engine unless operator set AGENT_BROWSER_ENGINE
+    *) echo "[start.sh] warning: unknown /opt/browser_engine='${_baked}'" >&2 ;;
+  esac
+  unset _baked _engine_val
+fi
+
 exec python /app/server.py

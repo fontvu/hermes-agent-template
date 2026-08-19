@@ -115,6 +115,32 @@ WebSocket endpoints the dashboard opens (`/api/pty`, `/api/ws`, `/api/events`, `
 
 Config lives on the `/data` volume at `/data/.hermes/` (`.env`, `config.yaml`, `auth.json`, sessions, pairing state) and survives redeploys. Gateway output is captured into a ring buffer and streamed to the Logs panel.
 
+## Browser Automation (free, self-hosted)
+
+Hermes ships `browser_*` tools via `agent-browser`. This image defaults lean (`INSTALL_BROWSER=none` — no baked engine) and lets the operator pick:
+
+| `INSTALL_BROWSER` | Weight | Engine | Hermes config | Notes |
+|---|---|---|---|---|
+| `none` (default) | +0 MB | auto | — | Lean for Railway; use `BROWSER_CDP_URL` for cloud (Kitesurf/Browserbase — add `?browser=kitesurf` to Browser Run CDP) |
+| `lightpanda` | ~35 MB | lightpanda | `AGENT_BROWSER_ENGINE=lightpanda` (auto-set at boot) | **Recommended for OCI VM** — free, baked, 1.3-5.8× faster nav, no screenshots |
+| `chromium` | ~500 MB | chrome | `AGENT_BROWSER_ENGINE=chrome` (auto-set at boot) | Full engine with screenshots |
+
+Lightpanda has no renderer — screenshots return a placeholder; Hermes auto-falls back to Chrome for eligible commands, but that needs Chromium baked. For most agent tasks (`open`/`snapshot`/`click`/`eval`) it is enough.
+
+```bash
+# OCI / self-host — lightpanda (recommended)
+docker build --build-arg INSTALL_BROWSER=lightpanda -t hermes-agent .
+docker run --rm -it -p 8080:8080 -e PORT=8080 -e ADMIN_PASSWORD=changeme -v hermes-data:/data hermes-agent
+
+# Full Chromium (need screenshots)
+docker build --build-arg INSTALL_BROWSER=chromium -t hermes-agent .
+
+# Runtime override — force engine or point at any CDP endpoint (Kitesurf, Browserbase, browserless)
+docker run -e AGENT_BROWSER_ENGINE=lightpanda -e BROWSER_CDP_URL=wss://... -p 8080:8080 hermes-agent
+
+# Lightpanda binary is self-contained; no runtime install step. Set once at build time.
+```
+
 ## Running Locally
 
 ```bash
