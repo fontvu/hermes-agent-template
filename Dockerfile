@@ -143,6 +143,14 @@ COPY overrides/gateway/slash_commands.py \
 COPY overrides/hermes_cli/model_switch.py \
      /opt/hermes-agent/hermes_cli/model_switch.py
 
+# ── In-tree patch: resolve_provider_full plugin-provider support ──────────────
+# Upstream's resolve_provider_full() only knows models.dev + HERMES_OVERLAYS.
+# Plugin providers like commandcode live in auth.PROVIDER_REGISTRY but were
+# invisible to --provider resolution. Add fallback lookup so /model --provider
+# commandcode works and the picker callback can switch to plugin providers.
+COPY overrides/hermes_cli/providers.py \
+     /opt/hermes-agent/hermes_cli/providers.py
+
 # Why pre-build ui-tui (and why we don't delete it after):
 # - The dashboard's embedded Chat tab spawns `node ui-tui/dist/entry.js`
 #   on every WebSocket connect to /api/pty.
