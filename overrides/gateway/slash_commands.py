@@ -1858,6 +1858,13 @@ class GatewaySlashCommandsMixin:
                 adapter is not None
                 and getattr(type(adapter), "send_model_picker", None) is not None
             )
+            import logging as _logging
+            _logging.getLogger("gateway.slash_commands").warning(
+                "DEBUG /model picker path: has_picker=%s adapter=%r source_platform=%r source_profile=%r",
+                has_picker, type(adapter).__name__ if adapter else None,
+                getattr(getattr(source, "platform", None), "value", None),
+                getattr(source, "profile", None),
+            )
 
             if has_picker:
                 try:
