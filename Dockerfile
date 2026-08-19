@@ -64,7 +64,9 @@ RUN apt-get update && \
 # See also: the volume-backed PATH further down, which is where AD-HOC tools
 # (anything not listed here) should be installed so they survive a redeploy.
 #
-# WEIGHT: 51MB for the six packages, most of it gh.
+# WEIGHT: ~85MB for 24 packages, most of it gh + gnupg. nmap is included for
+# network diagnostics — it needs root for SYN scans / OS detection, which the
+# container runs as, so it works out of the box.
 RUN mkdir -p -m 755 /etc/apt/keyrings && \
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
       -o /etc/apt/keyrings/githubcli-archive-keyring.gpg && \
@@ -73,7 +75,9 @@ RUN mkdir -p -m 755 /etc/apt/keyrings && \
       > /etc/apt/sources.list.d/github-cli.list && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
-      gh jq ripgrep fd-find unzip less && \
+      gh jq ripgrep fd-find unzip less nano nmap \
+      openssh-client dnsutils procps iproute2 net-tools file tree \
+      openssl gnupg sqlite3 rsync tcpdump binutils strace zip xz-utils && \
     ln -sf "$(command -v fdfind)" /usr/local/bin/fd && \
     rm -rf /var/lib/apt/lists/*
 
