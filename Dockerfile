@@ -67,6 +67,10 @@ RUN apt-get update && \
 # WEIGHT: ~85MB for 24 packages, most of it gh + gnupg. nmap is included for
 # network diagnostics — it needs root for SYN scans / OS detection, which the
 # container runs as, so it works out of the box.
+# LaTeX + pandoc add ~500MB more (texlive-binaries is the bulk of it). pandoc
+# renders markdown → PDF through pdflatex; base + recommended +
+# fonts-recommended covers standard documents without the multi-GB
+# texlive-latex-extra.
 RUN mkdir -p -m 755 /etc/apt/keyrings && \
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
       -o /etc/apt/keyrings/githubcli-archive-keyring.gpg && \
@@ -77,7 +81,8 @@ RUN mkdir -p -m 755 /etc/apt/keyrings && \
     apt-get install -y --no-install-recommends \
       gh jq ripgrep fd-find unzip less nano nmap \
       openssh-client dnsutils procps iproute2 net-tools file tree \
-      openssl gnupg sqlite3 rsync tcpdump binutils strace zip xz-utils && \
+      openssl gnupg sqlite3 rsync tcpdump binutils strace zip xz-utils \
+      pandoc texlive-latex-base texlive-latex-recommended texlive-fonts-recommended && \
     ln -sf "$(command -v fdfind)" /usr/local/bin/fd && \
     rm -rf /var/lib/apt/lists/*
 
