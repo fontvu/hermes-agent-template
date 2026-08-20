@@ -172,9 +172,15 @@ def _consolidate_pairing_dirs() -> None:
 PAIRING_TTL = 3600
 
 # Native Hermes dashboard — runs on loopback, fronted by our reverse proxy.
-HERMES_DASHBOARD_HOST = "127.0.0.1"
+# Public hostname via Nous OAuth (hermes-oci.itsfontvu.de): set
+# HERMES_DASHBOARD_HOST=0.0.0.0 to engage hermes' auth gate on a
+# non-loopback bind (127.0.0.1=no gate, --insecure is no-op).
+# HERMES_DASHBOARD_URL always dials loopback — the dashboard binds
+# 0.0.0.0 for public access but we still reach it via localhost, just
+# like the browser hits Cloudflare rather than the container directly.
+HERMES_DASHBOARD_HOST = os.environ.get("HERMES_DASHBOARD_HOST", "127.0.0.1")
 HERMES_DASHBOARD_PORT = int(os.environ.get("HERMES_DASHBOARD_PORT", "9119"))
-HERMES_DASHBOARD_URL = f"http://{HERMES_DASHBOARD_HOST}:{HERMES_DASHBOARD_PORT}"
+HERMES_DASHBOARD_URL = f"http://127.0.0.1:{HERMES_DASHBOARD_PORT}"
 
 # Header hermes' own SPA uses to present its per-process session token
 # (hermes_cli/web_server.py's _SESSION_HEADER_NAME) — see

@@ -277,6 +277,10 @@ COPY templates/ /app/templates/
 COPY start.sh /app/start.sh
 RUN chmod +x /app/start.sh
 
+# Public hostname (hermes-oci.itsfontvu.de) via Nous OAuth:
+# HERMES_DASHBOARD_HOST=127.0.0.1 keeps the proxy-only gate (default),
+# HERMES_DASHBOARD_HOST=0.0.0.0 engages hermes' native OAuth gate.
+ENV HERMES_DASHBOARD_HOST=127.0.0.1
 ENV HOME=/data
 ENV HERMES_HOME=/data/.hermes
 
