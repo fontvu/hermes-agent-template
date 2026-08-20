@@ -702,40 +702,6 @@
     margin-top: 4px;
   }
 
-  /* ── Template cards ──────────────────────────────── */
-  .template-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-    gap: 14px;
-  }
-  .template-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 18px;
-    transition: border-color 0.15s;
-  }
-  .template-card:hover { border-color: var(--accent); }
-  .template-card-name {
-    font-family: var(--font-mono);
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text);
-    margin-bottom: 8px;
-  }
-  .template-card-desc {
-    font-size: 12px;
-    color: var(--text-dim);
-    line-height: 1.5;
-    margin-bottom: 14px;
-  }
-  .template-card .btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    text-decoration: none;
-  }
-
   /* ── Header branding ──────────────────────────────── */
   .header-branding {
     display: flex;
@@ -1070,10 +1036,6 @@
     <div class="nav-item" :class="{active: page==='guide'}" @click="page='guide'">
       <span class="nav-icon">📖</span>
       <span>How to Setup</span>
-    </div>
-    <div class="nav-item" :class="{active: page==='templates'}" @click="page='templates'">
-      <span class="nav-icon">🚀</span>
-      <span>Other Templates</span>
     </div>
     <div class="nav-item" :class="{active: page==='changelog'}" @click="page='changelog'">
       <span class="nav-icon">🆕</span>
@@ -1801,7 +1763,7 @@
         <div style="background:rgba(98,114,255,0.06);border:1px solid rgba(98,114,255,0.2);border-radius:8px;padding:12px 15px;margin-bottom:20px;font-size:13px;color:var(--text-dim);line-height:1.6;">
           <div style="margin-bottom:8px;">
             <code>main</code> always ships the <strong style="color:var(--text);">latest</strong> release — that is what you get by default.
-            To stay on, or roll back to, a particular Hermes version, point your Railway service at that release's branch and redeploy.
+            To stay on, or roll back to, a particular Hermes version, rebuild the image with that release's <code>HERMES_REF</code> build arg.
           </div>
           <div>
             Release branches are named <code>release/&lt;hermes-version&gt;/&lt;n&gt;</code>.
@@ -1834,7 +1796,6 @@
             <li><strong>xAI Grok SuperGrok OAuth</strong> — connect a SuperGrok subscription via device-code flow directly from the provider dropdown. No API key needed; tokens auto-refresh, and the gateway restarts with xAI OAuth active.</li>
             <li><strong>Pinned-version badge</strong> — the sidebar footer shows which Hermes release this deployment is pinned to (read from <code>HERMES_REF</code>, never hardcoded). Click it to open this panel, where per-release branch names for rolling back are listed.</li>
             <li><strong>Hermes Console WebSocket proxy</strong> — the native Hermes Console (System tab → "Open console") is now proxied through the same cookie gate as the rest of the dashboard, so it works out of the box without extra configuration.</li>
-            <li><strong>Other Templates panel</strong> — a sidebar panel links to other one-click AI agent templates you can deploy on Railway.</li>
           </ul>
         </div>
 
@@ -1956,43 +1917,6 @@
       </div>
     </div>
 
-    <!-- ── Other Templates panel ───────────────────── -->
-    <div class="panel" :class="{active: page==='templates'}">
-      <div class="panel-header">
-        <div class="panel-title">Other Templates</div>
-        <div class="panel-subtitle">Deploy more AI agents on Railway</div>
-      </div>
-      <div class="panel-body">
-        <p style="font-size:13px;color:var(--text-dim);margin-bottom:18px;">
-          Explore other AI agent templates you can deploy on Railway with one click.
-        </p>
-
-        <div class="template-grid">
-
-          <div class="template-card">
-            <div class="template-card-name">OpenClaw</div>
-            <div class="template-card-desc">
-              Self-hosted OpenClaw agent — deploy and manage your own OpenClaw instance on Railway.
-            </div>
-            <a class="btn primary" href="https://railway.com/deploy/self-host-openclaw?referralCode=QXdhdr&utm_medium=integration&utm_source=template&utm_campaign=generic" target="_blank" rel="noopener">
-              Deploy on Railway
-            </a>
-          </div>
-
-          <div class="template-card">
-            <div class="template-card-name">Paperclip</div>
-            <div class="template-card-desc">
-              Paperclip AI Company — deploy your own Paperclip AI agent instance on Railway.
-            </div>
-            <a class="btn primary" href="https://railway.com/deploy/paperclip-ai-company?referralCode=QXdhdr&utm_medium=integration&utm_source=template&utm_campaign=generic" target="_blank" rel="noopener">
-              Deploy on Railway
-            </a>
-          </div>
-
-        </div>
-      </div>
-    </div>
-
   </div><!-- #main -->
 </div><!-- #layout -->
 
@@ -2034,7 +1958,7 @@ function app() {
     savedConfigComplete: false,
     // Hermes release this image pins, reported by the server (HERMES_REF).
     // Never hardcoded here — it must stay correct when a deployment is pinned
-    // to an older release via the Railway variable.
+    // to an older release via the HERMES_REF build arg.
     hermesVersion: '',
 
     tools,

@@ -19,8 +19,7 @@ ARG HERMES_REPO=https://github.com/NousResearch/hermes-agent.git
 # Persist the build arg into the runtime env so the admin UI can display which
 # Hermes release this image actually pins. Reading it (rather than hardcoding a
 # version in the template) keeps the badge honest when someone overrides
-# HERMES_REF as a Railway service variable to pin an older release — a Railway
-# runtime variable simply shadows this ENV, so the UI still shows the truth.
+# HERMES_REF as a build arg to pin an older release.
 ENV HERMES_REF=${HERMES_REF}
 
 # tini = tiny init that we run as PID 1. Without it, hermes's grandchild
@@ -28,8 +27,8 @@ ENV HERMES_REF=${HERMES_REF}
 # reparent to PID 1 when their parents exit and pile up as zombies. After
 # weeks of uptime that exhausts the kernel's PID table → "fork: cannot
 # allocate memory" and the container dies. tini reaps zombies in the
-# background and forwards SIGTERM/SIGINT to our entrypoint so Railway's
-# stop signal still triggers our graceful shutdown. Standard container init
+# background and forwards SIGTERM/SIGINT to our entrypoint so container stop
+# signals still trigger our graceful shutdown. Standard container init
 # (same as Docker's `--init` flag and Kubernetes' pause container).
 #
 # Node.js is required only at build time to compile the Hermes React dashboard.
@@ -46,7 +45,7 @@ RUN apt-get update && \
 
 # The agent's terminal toolbox — BAKED IN ON PURPOSE.
 #
-# This container is immutable: Railway rebuilds it from this Dockerfile on every
+# This container is immutable: it's rebuilt from this Dockerfile on every
 # deploy, so anything the agent `apt-get install`s at runtime (it runs as root,
 # so it can) is silently gone on the next redeploy while its shell commands keep
 # referencing it. `gh` was lost exactly this way. Tools the agent reaches for
@@ -177,7 +176,7 @@ COPY overrides/hermes_cli/providers.py \
 # the dashboard "Update Hermes" button refuse regardless of runtime container
 # detection — exactly what upstream's own published image does (it bakes a
 # docker stamp into /opt/hermes). Belt-and-suspenders with start.sh's home stamp:
-# if a future hermes release changes or drops is_container()'s Railway marker
+# if a future hermes release changes or drops is_container()'s container marker
 # (/run/.containerenv), the home stamp would stop being honored but this one
 # still refuses. Re-verify the install-tree path if hermes stops installing
 # editable from /opt/hermes-agent.
@@ -191,29 +190,6 @@ RUN uv pip install --system --no-cache -r /app/requirements.txt
 # a bump here must not invalidate those (slow) layers. Placed BEFORE the COPY of
 # server.py/templates so ordinary app edits don't rebuild them either.
 
-# Railway CLI — prebuilt binary, matching the approach in the wake workflow at
-# fontvu/hermes-agent-scripts (`npm i -g @railway/cli` postinstall intermittently
-# fails on shared runners with a self-signed-cert TLS error; a direct release
-# download does not).
-#
-# To bump: check https://github.com/railwayapp/cli/releases and update the
-# default below. Note the asset targets differ per arch — amd64 publishes a
-# glibc build, arm64 only a musl one — hence the case mapping rather than a
-# single hardcoded filename. The wake workflow pins its own copy separately;
-# the two do not need to match.
-ARG RAILWAY_CLI_VERSION=5.37.2
-RUN set -eu; \
-    case "$(dpkg --print-architecture)" in \
-      amd64) rw_target=x86_64-unknown-linux-gnu ;; \
-      arm64) rw_target=aarch64-unknown-linux-musl ;; \
-      *) echo "unsupported arch for railway cli: $(dpkg --print-architecture)" >&2; exit 1 ;; \
-    esac; \
-    curl -fsSL "https://github.com/railwayapp/cli/releases/download/v${RAILWAY_CLI_VERSION}/railway-v${RAILWAY_CLI_VERSION}-${rw_target}.tar.gz" \
-      -o /tmp/railway.tar.gz; \
-    tar -xzf /tmp/railway.tar.gz -C /usr/local/bin railway; \
-    rm /tmp/railway.tar.gz; \
-    chmod +x /usr/local/bin/railway
-
 # OCI CLI — installed into its OWN venv, not the system interpreter.
 #
 # oci-cli hard-pins several packages hermes also depends on (click, PyYAML,
@@ -225,7 +201,7 @@ RUN set -eu; \
 # only the `oci` entrypoint is exposed, via symlink.
 #
 # Oracle's official install.sh is deliberately avoided: it targets $HOME, which
-# is /data here, and the Railway volume mounts OVER /data at runtime — the whole
+# is /data here, and a volume mounts OVER /data at runtime — the whole
 # install would vanish the moment the container starts.
 #
 # WEIGHT: this layer measures 444MB (`docker history`) — by far the largest in
@@ -242,7 +218,7 @@ RUN set -eu; \
 # command reference output. Note also: uv writes no .pyc, so the first `oci`
 # invocation bytecompiles into the container's writable layer (~200MB, ephemeral).
 #
-# `railway redeploy` reuses the built image, so the daily wake does not re-pay
+# The built image is reused on redeploy, so the daily wake does not re-pay
 # any of this; only a push that rebuilds does. If the trade stops being worth it,
 # delete this layer and install oci-cli into a venv under /data/.local instead —
 # the volume persists, so it survives redeploys without shipping in the image.
@@ -306,8 +282,8 @@ ENV HERMES_HOME=/data/.hermes
 
 # Volume-backed bin dirs — the durable home for AD-HOC tools.
 #
-# HOME=/data already puts ~/.local/bin and ~/bin on the persistent Railway
-# volume, but nothing ever added them to PATH, so a binary dropped there was
+# HOME=/data already puts ~/.local/bin and ~/bin on the persistent volume,
+# but nothing ever added them to PATH, so a binary dropped there was
 # invisible and the agent had no place to install anything that outlives a
 # redeploy. With these on PATH, `curl -o /data/.local/bin/<tool>` (or any
 # installer honouring ~/.local/bin) survives every deploy. apt packages cannot
@@ -329,6 +305,6 @@ ENV HERMES_TUI_DIR=/opt/hermes-agent/ui-tui
 
 # tini wraps start.sh so it runs as PID 1's child instead of as PID 1 itself.
 # `-g` propagates signals to the whole process group so `docker stop` /
-# Railway's SIGTERM cleanly terminates the entire tree, not just start.sh.
+# container SIGTERM cleanly terminates the entire tree, not just start.sh.
 ENTRYPOINT ["/usr/bin/tini", "-g", "--"]
 CMD ["/app/start.sh"]

@@ -21,7 +21,7 @@ mkdir -p /data/.hermes/cron /data/.hermes/sessions /data/.hermes/logs \
          /data/.hermes/home
 
 # Volume-backed bin dirs for ad-hoc CLI tools the agent installs itself.
-# Dockerfile appends both to PATH; created here because a fresh Railway volume
+# Dockerfile appends both to PATH; created here because a fresh volume
 # mounts empty over /data, and a PATH entry pointing at a missing directory is
 # silently ignored — so an installer writing to ~/.local/bin would fail and the
 # tool would be unreachable. Tools the agent needs *routinely* belong in the
@@ -29,9 +29,9 @@ mkdir -p /data/.hermes/cron /data/.hermes/sessions /data/.hermes/logs \
 # installs survive on the volume, apt packages do not.
 mkdir -p /data/.local/bin /data/bin
 
-# Credential homes for the baked-in cloud CLIs. HOME=/data, so `oci` and
-# `railway` already store their config on the persistent volume — `oci setup
-# config` / `railway login` survive redeploys and need doing only once.
+# Credential homes for the baked-in cloud CLIs. HOME=/data, so `oci`
+# already stores its config on the persistent volume — `oci setup
+# config` survives redeploys and needs doing only once.
 # .oci is created 700 up front because the OCI CLI refuses to use an API key
 # whose file is group/world-readable ("Permissions on ... are too open"), and a
 # dir created later by a umask-022 process makes that easy to trip over.
@@ -46,7 +46,7 @@ mkdir -p /data/.oci && chmod 700 /data/.oci
 # upgrade is ephemeral (reverts on the next redeploy) and can desync the Python
 # package from the image's pre-built web_dist/ui-tui bundles. Stamping "docker"
 # makes that button correctly refuse with "pull a fresh image / redeploy", which
-# matches the real upgrade path here (bump HERMES_REF in Railway + redeploy).
+# matches the real upgrade path here (bump HERMES_REF + rebuild).
 # Written unconditionally each boot so it stays correct and self-heals.
 printf 'docker\n' > /data/.hermes/.install_method
 
@@ -81,10 +81,9 @@ rm -f /data/.hermes/gateway.pid
 # provider `http://127.0.0.1:9119/...` — a URL only reachable inside this
 # container, leaving the browser on a dead tab after consent with nothing in the
 # logs. resolve_public_url() checks HERMES_DASHBOARD_PUBLIC_URL first, so
-# setting it is the supported fix. Railway injects RAILWAY_PUBLIC_DOMAIN; `:=`
-# keeps an operator-set value (e.g. a custom domain) winning.
-if [ -n "${RAILWAY_PUBLIC_DOMAIN:-}" ]; then
-  : "${HERMES_DASHBOARD_PUBLIC_URL:=https://${RAILWAY_PUBLIC_DOMAIN}}"
+# setting it is the supported fix. Set HERMES_DASHBOARD_PUBLIC_URL to your
+# public URL (e.g. https://your-domain.com) to enable MCP OAuth.
+if [ -n "${HERMES_DASHBOARD_PUBLIC_URL:-}" ]; then
   export HERMES_DASHBOARD_PUBLIC_URL
 fi
 

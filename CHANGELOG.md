@@ -1,8 +1,8 @@
 # Changelog
 
-Release notes for this Railway template. The user-facing copy of this lives in
+Release notes for this Docker template. The user-facing copy of this lives in
 the admin UI under **What's New** (`templates/index.html`) — the two are kept in
-sync; see `CLAUDE.md` → *Release workflow*.
+sync.
 
 **Branch naming:** `release/<hermes-version>/<n>`. `/1` is where that Hermes
 version first landed; `/2`, `/3` … are template-only fixes on top of it. The
@@ -30,8 +30,6 @@ release.
 - **Hermes Console WebSocket proxy** — the native Hermes Console (System tab →
   "Open console") is now proxied through the same cookie gate as the rest of the
   dashboard, so it works out of the box without extra configuration.
-- **Other Templates panel** — a sidebar panel links to other one-click AI agent
-  templates you can deploy on Railway.
 
 ---
 
@@ -115,9 +113,7 @@ release.
   restore and at boot, and the store is resolved per request rather than cached.
 - **Long replies** — Hermes disabled its loopback WebSocket keepalive; the proxy
   now matches it, so Chat no longer drops mid-reply.
-- **MCP sign-in** — `HERMES_DASHBOARD_PUBLIC_URL` is derived from
-  `RAILWAY_PUBLIC_DOMAIN`, since Hermes builds its OAuth return address from a
-  Host header this proxy must rewrite.
+- **MCP sign-in** — `HERMES_DASHBOARD_PUBLIC_URL` can be set to your public URL, since Hermes builds its OAuth return address from a Host header this proxy must rewrite.
 - **Memory providers** — a new dashboard button installs into the running
   container with no immutability check; a warning is injected before it runs.
 - **Conversation auto-reset** — upstream flipped the default, which would have

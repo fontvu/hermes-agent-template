@@ -1,5 +1,5 @@
 """
-Hermes Agent — Railway admin server.
+Hermes Agent — Docker admin server.
 
 Responsibilities:
   - Admin UI / setup wizard at /setup (Starlette + Jinja, cookie-auth guarded)
@@ -13,8 +13,8 @@ SPA's plain fetch() calls do not reliably include basic-auth creds across browse
 and basic-auth's per-directory protection space forced separate prompts for
 /setup and /. Cookies auto-include on every same-origin request, so both the
 setup UI and the proxied dashboard work with a single login. The cookie signing
-secret is regenerated on every process start, so any ADMIN_PASSWORD change on
-Railway (which triggers a redeploy) invalidates all existing sessions.
+secret is regenerated on every process start, so any ADMIN_PASSWORD change
+(which triggers a container restart) invalidates all existing sessions.
 
 First-visit behavior: if no provider+model config exists, GET / redirects to /setup.
 Once configured, / proxies to the Hermes dashboard. A small "← Setup" widget is
@@ -67,10 +67,10 @@ HERMES_HOME = os.environ.get("HERMES_HOME", str(Path.home() / ".hermes"))
 ENV_FILE = Path(HERMES_HOME) / ".env"
 
 # The Hermes release this image pins. The Dockerfile promotes its `ARG
-# HERMES_REF` to an ENV so we can read it here; a Railway service variable of
-# the same name (the documented way to pin an older release) shadows that ENV,
-# so this always reflects what actually got built rather than a hardcoded
-# string that would go stale — or worse, misreport after a deliberate rollback.
+# HERMES_REF` to an ENV so we can read it here; a build arg override of
+# the same name shadows that ENV, so this always reflects what actually got
+# built rather than a hardcoded string that would go stale — or worse,
+# misreport after a deliberate rollback.
 HERMES_VERSION = os.environ.get("HERMES_REF", "").strip()
 
 
@@ -607,12 +607,8 @@ def write_config_yaml(data: dict[str, str], *, reset_model: bool = False) -> str
     # preference, so a value chosen in hermes' own settings survives.
     merged_session_reset = dict(merged.get("session_reset") if isinstance(merged.get("session_reset"), dict) else {})
     merged_session_reset.setdefault("mode", "both")
-    merged["session_reset"] = merged_session_reset
-
-    merged["data_dir"] = HERMES_HOME
-
     # Custom OpenAI-compatible endpoint — write custom_providers block when configured,
-    # remove it when not (safe on Railway where users don't hand-edit config.yaml).
+    # remove it when not (safe where users don't hand-edit config.yaml).
     custom_base_url = data.get("CUSTOM_PROVIDER_BASE_URL", "").strip()
     if custom_base_url:
         raw_name = data.get("CUSTOM_PROVIDER_NAME", "").strip() or custom_base_url
@@ -635,7 +631,7 @@ def write_config_yaml(data: dict[str, str], *, reset_model: bool = False) -> str
 def build_hermes_env() -> dict[str, str]:
     """Merge OS env + HERMES_HOME + .env file contents for a hermes subprocess.
 
-    .env values take priority over Railway env vars. We build the env this way
+    .env values take priority over OS env vars. We build the env this way
     so hermes's own dotenv loading (which reads the same file) doesn't shadow
     our values. Shared by every hermes subprocess we spawn (gateway, dashboard)
     — a subprocess started without this (e.g. via a bare env=None, which just
@@ -656,7 +652,7 @@ def build_hermes_env() -> dict[str, str]:
     # offline while Gateway.start() has already reported "running" and /health
     # 200s. `HERMES_GATEWAY_MAX_STARTS` is upstream's documented escape hatch:
     # <= 0 skips the check and the ledger write entirely. setdefault so a
-    # Railway service variable or .env can still re-enable it.
+    # service variable or .env can still re-enable it.
     env.setdefault("HERMES_GATEWAY_MAX_STARTS", "0")
     # v2026.8.3's `agent.restart_after_turn_timeout` (default 21600) makes
     # /restart wait for the active turn, so a wedged turn leaves the bot alive,
@@ -1031,7 +1027,7 @@ def is_config_complete(data: dict[str, str] | None = None) -> bool:
     subprocess reads all of them (build_hermes_env() merges os.environ + .env;
     hermes itself reads config.yaml + auth.json). So readiness is the UNION:
       - .env         — template setup wizard (LLM_MODEL + PROVIDER_KEYS)
-      - os.environ   — Railway service variables
+      - os.environ   — OS env vars (e.g. Docker -e, container env)
       - auth.json    — native 'Keys' tab / OAuth logins (any provider)
       - config.yaml  — native 'Keys' tab (model.default; custom endpoint key)
 
@@ -1092,7 +1088,7 @@ def unmask(new: dict[str, str], existing: dict[str, str]) -> dict[str, str]:
 # so both the setup UI and the proxied Hermes dashboard work with one login.
 #
 # The SECRET is regenerated on every process start. That means any ADMIN_PASSWORD
-# change via Railway → redeploy → all existing cookies invalidate → users re-login.
+# change (which triggers a container restart) invalidates all existing sessions.
 import hashlib as _hashlib
 import hmac as _hmac
 from urllib.parse import quote as _url_quote, urlparse as _urlparse
@@ -1371,7 +1367,7 @@ class Gateway:
         if self._stopping:
             return
         # Unexpected exit: in-band `/restart` (exit 75), a crash, or an OOM kill.
-        # On Railway nothing else brings the gateway back, so we supervise it.
+        # Nothing else brings the gateway back, so we supervise it.
         self.state = "error"
         self.logs.append(f"[gateway] exited (code {rc}) — supervising restart")
         asyncio.create_task(self._supervise_respawn(proc.pid))
@@ -1460,7 +1456,7 @@ class Dashboard:
     the dashboard only starts once at boot, restart() must be called whenever
     a provider key is saved so the running process picks up the new env.
 
-    All subprocess output is streamed to our stdout (→ Railway logs) with a
+    All subprocess output is streamed to our stdout (container logs) with a
     `[dashboard]` prefix AND retained in a ring buffer for diagnostics.
     Unexpected exits are explicitly logged with their return code.
     """
@@ -1501,7 +1497,7 @@ class Dashboard:
             print(f"[dashboard] FAILED to spawn: {e!r}", flush=True)
 
     async def _drain(self):
-        """Stream subprocess output to Railway logs (prefixed) and a ring buffer."""
+        """Stream subprocess output to container logs (prefixed) and a ring buffer."""
         assert self.proc and self.proc.stdout
         try:
             async for raw in self.proc.stdout:
@@ -2021,7 +2017,7 @@ async def api_backup_download(request: Request) -> Response:
                 zf.writestr("template_manifest.json", json.dumps({
                     "hermes_version": version,
                     "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                    "template": "hermes-agent-railway-template",
+                    "template": "hermes-agent-docker-template",
                 }))
         except Exception:
             pass
@@ -2194,7 +2190,7 @@ _IN_CONTAINER_INSTALL_RE = re.compile(
 
 # Warn before any dashboard action that installs into the RUNNING container.
 # Neither endpoint carries an install-method check, so the `.install_method=docker`
-# stamp (invariant 4) does not refuse them, and on Railway the image is immutable:
+# stamp (invariant 4) does not refuse them, and in this immutable container
 # the package disappears on the next redeploy while config.yaml still names it.
 # Only the PACKAGE is lost — settings live in config.yaml/.env on the volume — so
 # re-running the install fully restores it, which is what the notice says. We warn
@@ -2210,14 +2206,14 @@ IMMUTABLE_INSTALL_WARNING_JS = (
     'if(m==="POST"&&/\\/api\\/(memory\\/providers\\/[^\\/]+\\/setup|tools\\/toolsets\\/[^\\/]+\\/post-setup)/.test(u)&&'
     '!window.confirm("MESSAGE FROM THE TEMPLATE CREATOR\\n'
     '----------------------------------------\\n\\n'
-    'This template is deployed on Railway as an immutable container: the image is '
+    'This template is deployed as an immutable container: the image is '
     'rebuilt from scratch on every deploy, so anything installed into the running '
     'container is wiped.\\n\\n'
     'Installing this will work right now, but only until your next deploy. '
     'After that it stays configured while its package is gone, and the agent '
     'fails to start it.\\n\\n'
     'If that happens, just install it again from here — your settings and API '
-    'keys are stored on the Railway volume, not inside the container, so '
+    'keys are stored on the persistent volume, not inside the container, so '
     'nothing needs reconfiguring and it resumes where it left off.\\n\\n'
     'To have it included permanently, please raise an issue here:\\n'
     'https://github.com/fontvu/hermes-agent-template/issues\\n\\n'
@@ -2280,7 +2276,7 @@ async def _proxy_to_dashboard(request: Request) -> Response:
         print(f"[proxy] upstream error for {request.method} {request.url.path}: {e}", flush=True)
         return HTMLResponse(DASHBOARD_UNAVAILABLE_HTML, status_code=502)
 
-    # Surface non-2xx responses from hermes into Railway logs so we can
+    # Surface non-2xx responses from hermes into container logs so we can
     # diagnose 401/500s without needing browser DevTools access.
     if upstream.status_code >= 400:
         body_snip = upstream.content[:200].decode("utf-8", errors="replace")
@@ -2344,7 +2340,7 @@ async def route_proxy(request: Request) -> Response:
     if err := guard(request): return err
     # Leave a trail when an in-container install runs: the browser already got
     # the confirm() from IMMUTABLE_INSTALL_WARNING_JS, but this is the only
-    # record in `railway logs` explaining why a provider works now and breaks
+    # record in container logs explaining why a provider works now and breaks
     # after the next redeploy.
     if request.method == "POST" and _IN_CONTAINER_INSTALL_RE.match(request.url.path):
         print(f"[proxy] in-container install requested: {request.url.path} — "
@@ -2412,7 +2408,7 @@ async def lifespan(app):
 #                             this route the button dies on one failed connect
 #                             with "Console connection failed before the server
 #                             handshake" (it does NOT retry, so nothing shows
-#                             up in railway logs).
+#                             up in container logs).
 #   /api/plugins/<name>/...   plugin-contributed sockets. Mounted by hermes
 #                             under /api/plugins/<name>/ (web_server.
 #                             _mount_plugin_api_routes), e.g. kanban's

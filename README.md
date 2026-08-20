@@ -1,8 +1,6 @@
-# Hermes Agent — Railway Template
+# Hermes Agent — Docker Template
 
-Deploy [Hermes Agent](https://github.com/NousResearch/hermes-agent) on [Railway](https://railway.app) with a web-based admin dashboard for configuration, gateway management, and user pairing.
-
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/hermes-agent-ai?referralCode=QXdhdr&utm_medium=integration&utm_source=template&utm_campaign=generic)
+Deploy [Hermes Agent](https://github.com/NousResearch/hermes-agent) with a web-based admin dashboard for configuration, gateway management, and user pairing. This template packages Hermes Agent as a single Docker image that runs anywhere Docker runs — no platform lock-in.
 
 > Hermes Agent is an autonomous AI agent by [Nous Research](https://nousresearch.com/) that lives on your server, connects to your messaging channels (Telegram, Discord, Slack, etc.), and gets more capable the longer it runs.
 
@@ -22,7 +20,6 @@ Deploy [Hermes Agent](https://github.com/NousResearch/hermes-agent) on [Railway]
 - **xAI Grok SuperGrok OAuth** — connect a SuperGrok subscription via device-code flow (no API key needed; tokens auto-refresh), selectable from the provider dropdown
 - **Pinned Version Badge** — the sidebar footer shows which Hermes release this deployment is pinned to; clicking it opens the What's New panel with per-release branch names for rolling back
 - **Hermes Console WebSocket Proxy** — the native Hermes Console (System tab → "Open console") is proxied through our edge, so it works without extra configuration
-- **Other Templates** — a sidebar panel links to other one-click AI agent templates you can deploy on Railway
 - **Reset Config** — one-click reset to start fresh
 - **Backup & Restore** — download a full snapshot (config, credentials, chat history, memories, skills) as a zip, and restore it — including into a fresh project — to clone a deployment. Not encrypted; a safety snapshot is taken automatically before every restore.
 
@@ -45,12 +42,24 @@ Hermes Agent interacts entirely through messaging channels — there is no chat 
 3. Send a message to your new bot — it will appear as a pairing request in the admin dashboard
 4. To find your Telegram user ID, message [@userinfobot](https://t.me/userinfobot)
 
-### 3. Deploy to Railway
+### 3. Deploy with Docker
 
-1. Click the **Deploy on Railway** button above
-2. Set the `ADMIN_PASSWORD` environment variable — if you leave it unset, a random one is generated and printed to the deploy logs
-3. Attach a **volume** mounted at `/data` (persists config across redeploys)
-4. Open your app URL — log in with username `admin` and your password
+1. Build the image:
+   ```bash
+   docker build -t hermes-agent .
+   ```
+2. Run the container with a persistent volume for config:
+   ```bash
+   docker run -d \
+     -p 8080:8080 \
+     -e PORT=8080 \
+     -e ADMIN_PASSWORD=your-secure-password \
+     -v hermes-data:/data \
+     hermes-agent
+   ```
+   - If you omit `ADMIN_PASSWORD`, a random one is generated and printed to the container logs on first start.
+   - The volume at `/data` persists all config, credentials, chat history, and pairing state across container restarts.
+3. Open `http://localhost:8080` (or your server's IP/domain) and log in with username `admin` and your password.
 
 ### 4. Configure in the Admin Dashboard
 
@@ -69,10 +78,11 @@ Message your Telegram bot. If you're a new user, a pairing request will appear i
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PORT` | `8080` | Web server port (set automatically by Railway) |
+| `PORT` | `8080` | Web server port |
 | `ADMIN_USERNAME` | `admin` | Login username |
-| `ADMIN_PASSWORD` | *(auto-generated)* | Login password — if unset, a random password is printed to the deploy logs. Changing it redeploys the service, which signs everyone out. |
-| `HERMES_REF` | *(pinned in Dockerfile)* | Hermes Agent version to install (any upstream git tag/branch). Set this to override the Dockerfile default without editing code — see [Updating Hermes](#updating-hermes). |
+| `ADMIN_PASSWORD` | *(auto-generated)* | Login password — if unset, a random password is printed to the container logs on startup. Changing it requires a container restart, which signs everyone out. |
+| `HERMES_REF` | *(pinned in Dockerfile)* | Hermes Agent version to install (any upstream git tag/branch). Set this as a Docker build arg to override the Dockerfile default without editing code — see [Updating Hermes](#updating-hermes). |
+| `HERMES_REPO` | `https://github.com/NousResearch/hermes-agent.git` | Source repo for Hermes Agent. Override to build from a fork or specific branch. |
 
 All other configuration (LLM provider, model, channels, tools) is managed through the admin dashboard.
 
@@ -97,7 +107,7 @@ Parallel (search), Firecrawl (scraping), Tavily (search), FAL (image gen), Brows
 One container runs a single public process that fronts two managed Hermes subprocesses:
 
 ```
-Railway Container
+Container
 └── server.py — Starlette + Uvicorn on 0.0.0.0:$PORT   (the only public surface)
     ├── /login, /logout    — cookie login (7-day, httponly)
     ├── /health            — health check (no auth)
@@ -109,11 +119,11 @@ Railway Container
     └── hermes gateway     — the agent itself (Telegram, Discord, …), auto-restarted
 ```
 
-The Hermes dashboard is **never exposed directly** — it binds loopback and is reachable only through the proxy, so one login covers both UIs. The gateway is supervised: if it crashes or is OOM-killed, `server.py` restarts it with backoff, giving up only if it fails repeatedly (Railway would not restart it on its own, because `server.py` is still alive and healthy).
+The Hermes dashboard is **never exposed directly** — it binds loopback and is reachable only through the proxy, so one login covers both UIs. The gateway is supervised: if it crashes or is OOM-killed, `server.py` restarts it with backoff, giving up only if it fails repeatedly.
 
 WebSocket endpoints the dashboard opens (`/api/pty`, `/api/ws`, `/api/events`, `/api/console`, `/api/plugins/*`) are also proxied through the same cookie gate — including the **Hermes Console** (System tab → "Open console"), which would otherwise fail to connect at our edge.
 
-Config lives on the `/data` volume at `/data/.hermes/` (`.env`, `config.yaml`, `auth.json`, sessions, pairing state) and survives redeploys. Gateway output is captured into a ring buffer and streamed to the Logs panel.
+Config lives on the `/data` volume at `/data/.hermes/` (`.env`, `config.yaml`, `auth.json`, sessions, pairing state) and survives container restarts. Gateway output is captured into a ring buffer and streamed to the Logs panel.
 
 ## Browser Automation (free, self-hosted)
 
@@ -154,14 +164,19 @@ Open `http://localhost:8080` and log in with `admin` / `changeme`.
 
 This template pins a specific Hermes Agent release in the `Dockerfile` (`ARG HERMES_REF`, currently `v2026.8.18`). To upgrade:
 
-- **Recommended:** set a `HERMES_REF` service variable in Railway to any upstream [release tag](https://github.com/NousResearch/hermes-agent/releases) (e.g. `v2026.8.18`), then redeploy. It's passed in as a Docker build arg and overrides the Dockerfile default — no code change needed.
-- **Or** bump `ARG HERMES_REF` in the `Dockerfile` and redeploy.
+- **Recommended:** pass `HERMES_REF` as a Docker build arg to any upstream [release tag](https://github.com/NousResearch/hermes-agent/releases) (e.g. `v2026.8.18`), then rebuild and redeploy:
+  ```bash
+  docker build --build-arg HERMES_REF=v2026.8.18 -t hermes-agent .
+  ```
+- **Or** bump `ARG HERMES_REF` in the `Dockerfile` and rebuild.
 
-You can also override the **source repo** with `HERMES_REPO` (e.g. to build from a fork or an unreleased branch), which is passed in as a Docker build arg alongside `HERMES_REF`.
+You can also override the **source repo** with `HERMES_REPO` (e.g. to build from a fork or an unreleased branch), passed as a Docker build arg alongside `HERMES_REF`:
+```bash
+docker build --build-arg HERMES_REF=v2026.8.18 --build-arg HERMES_REPO=https://github.com/yourfork/hermes-agent.git -t hermes-agent .
+```
 
-The "Update" button inside the Hermes dashboard is a **no-op on Railway** (it detects a container install and refuses) — the image is immutable, so a runtime self-update wouldn't survive a redeploy. Bump `HERMES_REF` and redeploy instead. When jumping releases, re-check that the Dockerfile's install extras still match upstream's `pyproject.toml`.
+The "Update" button inside the Hermes dashboard is a **no-op in this container** (it detects a container install and refuses) — the image is immutable, so a runtime self-update wouldn't survive a container restart. Rebuild with a new `HERMES_REF` and redeploy instead. When jumping releases, re-check that the Dockerfile's install extras still match upstream's `pyproject.toml`.
 
 ## Credits
 
 - [Hermes Agent](https://github.com/NousResearch/hermes-agent) by [Nous Research](https://nousresearch.com/)
-- UI inspired by [OpenClaw](https://github.com/praveen-ks-2001/openclaw-railway) admin template
